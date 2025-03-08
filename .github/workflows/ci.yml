@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Generate Protobuf files
+      run: |
+        docker run --rm -v $(pwd):/workspace -w /workspace bufbuild/buf:latest generate
+
+
+    - name: Set up Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: 1.24
+
+    - name: Install dependencies
+      run: go mod download
+
+    - name: Run tests
+      run: go test ./...
+
+    - name: Run golangci-lint
+      uses: golangci/golangci-lint-action@v2
+      with:
+        version: v1.42.1
+        args: run
