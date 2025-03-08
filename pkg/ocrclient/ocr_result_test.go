@@ -18,8 +18,8 @@ var redColor = color.RGBA{R: 255, G: 0, B: 0, A: 255}
 var greenColor = color.RGBA{R: 0, G: 255, B: 0, A: 255}
 
 func TestSort(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping test in short mode.")
+	if os.Getenv("E2E_TEST") != "true" {
+		t.Skip("skipping test; E2E_TEST is not set")
 	}
 	f, err := os.Open("../../resources/testdata/ocr/private/1.json")
 	if err != nil {

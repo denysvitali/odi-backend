@@ -12,6 +12,9 @@ import (
 )
 
 func getClient(t *testing.T) *zefix.Processor {
+	if os.Getenv("E2E_TEST") != "true" {
+		t.Skip("skipping test; E2E_TEST is not set")
+	}
 	p, err := zefix.New("postgres://postgres:postgres@localhost:5435/postgres")
 	if err != nil {
 		t.Fatal(err)
@@ -49,9 +52,6 @@ func TestProcessor(t *testing.T) {
 }
 
 func TestProcessor_FindCompanies(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping test in short mode.")
-	}
 	text := `Baloise Assicurazione SA
 Aeschengraben 21, Casella postale
 4002 Basel
@@ -66,9 +66,6 @@ servizioclientela@baloise.ch`
 	}
 }
 func TestProcessor_FindCompanies2(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping test in short mode.")
-	}
 	text := `Konto / Zahlbar an
 9403 Goldach
 labor team w ag

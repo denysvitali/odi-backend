@@ -20,10 +20,9 @@ func TestMain(m *testing.M) {
 var testEncryptionKey = "my key"
 
 func TestB2_Store(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping test in short mode.")
+	if os.Getenv("E2E_TEST") != "true" {
+		t.Skip("skipping test; E2E_TEST is not set")
 	}
-
 	b2Storage, err := b2.New(b2.Config{
 		Account:    os.Getenv("B2_ACCOUNT"),
 		Key:        os.Getenv("B2_KEY"),
@@ -45,10 +44,9 @@ func TestB2_Store(t *testing.T) {
 }
 
 func TestB2_StoreEncrypted(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping test in short mode.")
+	if os.Getenv("E2E_TEST") != "true" {
+		t.Skip("skipping test; E2E_TEST is not set")
 	}
-
 	b2Storage, err := b2.New(b2.Config{
 		Account:    os.Getenv("B2_ACCOUNT"),
 		Key:        os.Getenv("B2_KEY"),
@@ -71,10 +69,9 @@ func TestB2_StoreEncrypted(t *testing.T) {
 }
 
 func TestB2_RetrieveEncrypted(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping test in short mode.")
+	if os.Getenv("E2E_TEST") != "true" {
+		t.Skip("skipping test; E2E_TEST is not set")
 	}
-
 	b2Storage, err := b2.New(b2.Config{
 		Account:    os.Getenv("B2_ACCOUNT"),
 		Key:        os.Getenv("B2_KEY"),
@@ -105,10 +102,9 @@ func TestB2_RetrieveEncrypted(t *testing.T) {
 }
 
 func TestB2_Retrieve(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping test in short mode.")
+	if os.Getenv("E2E_TEST") != "true" {
+		t.Skip("skipping test; E2E_TEST is not set")
 	}
-
 	b2Storage, err := b2.New(b2.Config{
 		Account:    os.Getenv("B2_ACCOUNT"),
 		Key:        os.Getenv("B2_KEY"),
