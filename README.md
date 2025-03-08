@@ -122,3 +122,4 @@ Ingestor will contact your AirScan scanner and start processing documents. For e
 > If you want a more robust solution, use the filesystem storage backend and provide a path to a FUSE encrypted filesystem.
 
 If you discover a security issue, please report it to the email shown on [denv.it](https://denv.it).
+```
