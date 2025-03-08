@@ -83,6 +83,9 @@ func (t *testScanner) Err() error {
 var _ ingestor.DocumentsScanner = (*testScanner)(nil)
 
 func TestIngestWithExamplePictures(t *testing.T) {
+	if os.Getenv("E2E_TEST") != "true" {
+		t.Skip("skipping test; E2E_TEST is not set")
+	}
 	s := testScanner{
 		files: []io.Reader{
 			mustOpen("../../resources/testdata/private/1.jpg"),
