@@ -1,4 +1,4 @@
-package backend
+package server
 
 import (
 	"bytes"
@@ -17,12 +17,17 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"github.com/opensearch-project/opensearch-go"
-	"github.com/opensearch-project/opensearch-go/opensearchapi"
+	"github.com/opensearch-project/opensearch-go/v2"
+	"github.com/opensearch-project/opensearch-go/v2/opensearchapi"
 	"github.com/sirupsen/logrus"
 
 	"github.com/denysvitali/odi-backend/pkg/models"
 	"github.com/denysvitali/odi-backend/pkg/storage/model"
+)
+
+const (
+	serverReadTimeout  = 30 * time.Second
+	serverWriteTimeout = 30 * time.Second
 )
 
 type Server struct {
@@ -36,7 +41,7 @@ type Server struct {
 	storage              model.Retriever
 }
 
-var log = logrus.StandardLogger().WithField("package", "backend")
+var log = logrus.StandardLogger().WithField("package", "server")
 
 func New(osAddr string, osUsername string, osPassword string, osInsecureSkipVerify bool, osIndex string, ret model.Retriever) (*Server, error) {
 	u, err := url.Parse(osAddr)
@@ -74,7 +79,7 @@ func New(osAddr string, osUsername string, osPassword string, osInsecureSkipVeri
 	}
 	s.osClient = c
 
-	err = s.verifyOpensearch(osIndex)
+	err = s.verifyOpensearch(context.Background(), osIndex)
 	if err != nil {
 		return nil, err
 	}
@@ -83,21 +88,27 @@ func New(osAddr string, osUsername string, osPassword string, osInsecureSkipVeri
 	return &s, nil
 }
 
-func (s *Server) verifyOpensearch(osIndex string) error {
-	err := s.pingOs()
+func (s *Server) verifyOpensearch(ctx context.Context, osIndex string) error {
+	err := s.pingOs(ctx)
 	if err != nil {
-		return nil
+		return err
 	}
 
-	err = s.verifyIndex(osIndex)
+	err = s.verifyIndex(ctx, osIndex)
 	if err != nil {
-		return nil
+		return err
 	}
 	return nil
 }
 
 func (s *Server) Run(addr string) error {
-	return s.e.Run(addr)
+	srv := &http.Server{
+		Addr:         addr,
+		Handler:      s.e,
+		ReadTimeout:  serverReadTimeout,
+		WriteTimeout: serverWriteTimeout,
+	}
+	return srv.ListenAndServe()
 }
 
 func (s *Server) initRoutes() {
@@ -108,11 +119,14 @@ func (s *Server) initRoutes() {
 	g.POST("/search", s.handleSearch)
 	g.GET("/documents/:id", s.handleGetDocument)
 	g.GET("/documents", s.handleGetDocuments)
-	g.GET("/files/:scanId/:sequenceId", s.handleGetFile)
+	g.GET("/files/:scanID/:sequenceId", s.handleGetFile)
+	g.GET("/thumbnails/:id", s.handleGetThumbnail)
 }
 
 type SearchRequest struct {
 	SearchTerm string `json:"searchTerm"`
+	Size       int    `json:"size,omitempty"`
+	ScrollId   string `json:"scrollId,omitempty"`
 }
 
 func (s *Server) handleSearch(c *gin.Context) {
@@ -123,31 +137,55 @@ func (s *Server) handleSearch(c *gin.Context) {
 		return
 	}
 
-	searchContent := map[string]any{
-		"size": 50,
-		"query": map[string]any{
-			"query_string": map[string]any{
-				"query": searchRequest.SearchTerm,
+	var res *opensearchapi.Response
+
+	if searchRequest.ScrollId != "" {
+		// Continue pagination using scroll
+		scrollBody := map[string]any{
+			"scroll":    "10m",
+			"scroll_id": searchRequest.ScrollId,
+		}
+		jsonBody, _ := json.Marshal(scrollBody)
+		req := opensearchapi.ScrollRequest{
+			Body: bytes.NewReader(jsonBody),
+		}
+		res, err = req.Do(c.Request.Context(), s.osClient)
+	} else {
+		// Initial search with scroll enabled
+		size := searchRequest.Size
+		if size <= 0 {
+			size = 50
+		}
+
+		searchContent := map[string]any{
+			"size": size,
+			"query": map[string]any{
+				"query_string": map[string]any{
+					"query": searchRequest.SearchTerm,
+				},
 			},
-		},
-		"highlight": map[string]any{
-			"fields": map[string]any{
-				"text": map[string]any{},
+			"highlight": map[string]any{
+				"fields": map[string]any{
+					"text": map[string]any{},
+				},
 			},
-		},
+		}
+
+		jsonBody, marshalErr := json.Marshal(searchContent)
+		if marshalErr != nil {
+			log.Errorf("unable to marshal JSON: %v", marshalErr)
+			c.JSON(http.StatusInternalServerError, internalServerError)
+			return
+		}
+
+		req := opensearchapi.SearchRequest{
+			Index:  []string{s.osIndex},
+			Body:   bytes.NewReader(jsonBody),
+			Scroll: 10 * time.Minute,
+		}
+		res, err = req.Do(c.Request.Context(), s.osClient)
 	}
 
-	jsonBody, err := json.Marshal(searchContent)
-	if err != nil {
-		log.Errorf("unable to marshal JSON: %v", err)
-		c.JSON(http.StatusInternalServerError, internalServerError)
-		return
-	}
-
-	req := opensearchapi.SearchRequest{Index: []string{s.osIndex},
-		Body: bytes.NewReader(jsonBody),
-	}
-	res, err := req.Do(context.Background(), s.osClient)
 	if err != nil {
 		log.Errorf("unable to perform search: %v", err)
 		c.JSON(http.StatusInternalServerError, internalServerError)
@@ -169,14 +207,14 @@ func (s *Server) handleSearch(c *gin.Context) {
 	}
 }
 
-func (s *Server) returnDocument(c *gin.Context, scanId string, sequenceIdStr string) {
+func (s *Server) returnDocument(c *gin.Context, scanID string, sequenceIdStr string) {
 	sequenceId, err := strconv.ParseInt(sequenceIdStr, 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, badRequest)
 		return
 	}
 
-	page, err := s.storage.Retrieve(scanId, int(sequenceId))
+	page, err := s.storage.Retrieve(c.Request.Context(), scanID, int(sequenceId))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			c.JSON(http.StatusNotFound, gin.H{
@@ -199,15 +237,34 @@ func (s *Server) returnDocument(c *gin.Context, scanId string, sequenceIdStr str
 }
 
 func (s *Server) handleGetFile(c *gin.Context) {
-	scanId := c.Param("scanId")
+	scanID := c.Param("scanID")
 	sequenceIdStr := c.Param("sequenceId")
 
-	if scanId == "" || sequenceIdStr == "" {
+	if scanID == "" || sequenceIdStr == "" {
 		c.JSON(http.StatusBadRequest, badRequest)
 		return
 	}
 
-	s.returnDocument(c, scanId, sequenceIdStr)
+	s.returnDocument(c, scanID, sequenceIdStr)
+}
+
+func (s *Server) handleGetThumbnail(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, badRequest)
+		return
+	}
+
+	// Parse id in format: scanID_sequenceID
+	matches := docIdRegexp.FindStringSubmatch(id)
+	if len(matches) != 3 {
+		c.JSON(http.StatusBadRequest, badRequest)
+		return
+	}
+
+	scanID := matches[1]
+	sequenceIdStr := matches[2]
+	s.returnDocument(c, scanID, sequenceIdStr)
 }
 
 var badRequest = gin.H{
@@ -243,7 +300,7 @@ func (s *Server) handleGetDocument(c *gin.Context) {
 	}
 
 	req := opensearchapi.GetRequest{Index: s.osIndex, DocumentID: docId}
-	res, err := req.Do(context.Background(), s.osClient)
+	res, err := req.Do(c.Request.Context(), s.osClient)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, internalServerError)
 		return
@@ -278,20 +335,31 @@ func (s *Server) handleGetDocuments(c *gin.Context) {
 	var res *opensearchapi.Response
 	var err error
 	if scrollId != "" {
-		req := opensearchapi.ScrollRequest{
-			ScrollID: scrollId,
-			Scroll:   10 * time.Minute,
+		// Use Body to pass scroll_id instead of URL query parameter to avoid 405 errors
+		// when scroll_id is long. See https://github.com/opensearch-project/opensearch-go/issues/422
+		scrollBody := map[string]any{
+			"scroll":    "10m",
+			"scroll_id": scrollId,
 		}
-		res, err = req.Do(context.Background(), s.osClient)
+		jsonBody, _ := json.Marshal(scrollBody)
+		req := opensearchapi.ScrollRequest{
+			Body: bytes.NewReader(jsonBody),
+		}
+		res, err = req.Do(c.Request.Context(), s.osClient)
 	} else {
-		req := opensearchapi.SearchRequest{
-			Index: []string{s.osIndex},
-			Sort: []string{
-				"indexedAt:desc",
+		// Use Body for sort and scroll to minimize URL parameters
+		searchBody := map[string]any{
+			"sort": []map[string]any{
+				{"indexedAt": "desc"},
 			},
+		}
+		jsonBody, _ := json.Marshal(searchBody)
+		req := opensearchapi.SearchRequest{
+			Index:  []string{s.osIndex},
+			Body:   bytes.NewReader(jsonBody),
 			Scroll: 10 * time.Minute,
 		}
-		res, err = req.Do(context.Background(), s.osClient)
+		res, err = req.Do(c.Request.Context(), s.osClient)
 	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, internalServerError)
@@ -320,21 +388,21 @@ func (s *Server) handleGetDocuments(c *gin.Context) {
 	c.JSON(http.StatusOK, docs)
 }
 
-func (s *Server) pingOs() error {
+func (s *Server) pingOs(ctx context.Context) error {
 	req := opensearchapi.PingRequest{}
-	res, err := req.Do(context.Background(), s.osClient)
+	res, err := req.Do(ctx, s.osClient)
 	if err != nil {
 		return err
 	}
 	if res.IsError() {
-		return fmt.Errorf("unable to ping OS: %v", res.Status())
+		return fmt.Errorf("unable to ping OS: %s", res.Status())
 	}
 	return nil
 }
 
-func (s *Server) verifyIndex(index string) error {
+func (s *Server) verifyIndex(ctx context.Context, index string) error {
 	req := opensearchapi.CatIndicesRequest{Index: []string{index}}
-	res, err := req.Do(context.Background(), s.osClient)
+	res, err := req.Do(ctx, s.osClient)
 	if err != nil {
 		return err
 	}

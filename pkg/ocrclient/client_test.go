@@ -21,8 +21,8 @@ func getFile(t *testing.T, path string) *os.File {
 }
 
 func getClient(t *testing.T) *ocrclient.Client {
-	ocrApiAddr := os.Getenv("OCR_API_ADDR")
-	if ocrApiAddr == "" {
+	ocrAPIAddr := os.Getenv("OCR_API_ADDR")
+	if ocrAPIAddr == "" {
 		t.Skip("OCR_API_ADDR not set, skipping test")
 	}
 	c, err := ocrclient.New(os.Getenv("OCR_API_ADDR"))
@@ -35,7 +35,7 @@ func getClient(t *testing.T) *ocrclient.Client {
 		t.Fatalf("unable to create CA client: %v", err)
 	}
 
-	c.SetHttpTransport(caRoundtripper)
+	c.SetHTTPTransport(caRoundtripper)
 	return c
 }
 

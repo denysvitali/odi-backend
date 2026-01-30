@@ -1,6 +1,7 @@
 package indexer
 
 import (
+	"context"
 	"sync"
 
 	"github.com/denysvitali/odi-backend/pkg/models"
@@ -16,25 +17,25 @@ func NewWorker(id int, ch chan models.ScannedPage) Worker {
 	return Worker{id: id, ch: ch}
 }
 
-func (w *Worker) do(page models.ScannedPage) {
-	log.Debugf("[W%d]: processing %s", w.id, page.Id())
+func (w *Worker) do(ctx context.Context, page models.ScannedPage) {
+	log.Debugf("[W%d]: processing %s", w.id, page.ID())
 
 	// Process image
-	err := w.idx.Index(page)
+	err := w.idx.Index(ctx, page)
 	if err != nil {
-		log.Errorf("[W%d]: %s cannot be processed: %v", w.id, page.Id(), err)
+		log.Errorf("[W%d]: %s cannot be processed: %v", w.id, page.ID(), err)
 	}
 
-	log.Debugf("[W%d]: done processing %s", w.id, page.Id())
+	log.Debugf("[W%d]: done processing %s", w.id, page.ID())
 }
 
-func (w *Worker) Start(wg *sync.WaitGroup) {
+func (w *Worker) Start(ctx context.Context, wg *sync.WaitGroup) {
 	if w.idx == nil {
 		log.Errorf("unable to start worker: w.idx is nil")
 		return
 	}
 	for v := range w.ch {
-		w.do(v)
+		w.do(ctx, v)
 	}
 	log.Infof("done processing all")
 	wg.Done()

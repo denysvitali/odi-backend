@@ -26,13 +26,12 @@ var _ model.Storer = (*B2)(nil)
 var _ model.Retriever = (*B2)(nil)
 
 type B2 struct {
-	b2fs       fs.Fs
+	b2FS       fs.Fs
 	bucketName string
 	crypt      *odicrypt.OdiCrypt
 }
 
-func (b *B2) Store(page models.ScannedPage) (err error) {
-	ctx := context.Background()
+func (b *B2) Store(ctx context.Context, page models.ScannedPage) (err error) {
 
 	if b.crypt != nil {
 		// The nonce needs to be unique, but not secure.
@@ -52,7 +51,7 @@ func (b *B2) Store(page models.ScannedPage) (err error) {
 		return err
 	}
 
-	obj, err := b.b2fs.Put(ctx, page.Reader, b.toStorageFile(page, fileSize), &fs.RangeOption{Start: 0, End: fileSize})
+	obj, err := b.b2FS.Put(ctx, page.Reader, b.toStorageFile(page, fileSize), &fs.RangeOption{Start: 0, End: fileSize})
 	if err != nil {
 		return err
 	}
@@ -60,21 +59,21 @@ func (b *B2) Store(page models.ScannedPage) (err error) {
 	return nil
 }
 
-func fileName(scanId string, sequenceNumber int) string {
-	return fmt.Sprintf("%s/%d.jpg", scanId, sequenceNumber)
+func fileName(scanID string, sequenceNumber int) string {
+	return fmt.Sprintf("%s/%d.jpg", scanID, sequenceNumber)
 }
 
 func (b *B2) toStorageFile(page models.ScannedPage, fileSize int64) fs.ObjectInfo {
 	return rclone.NewSourceFile(
 		b.bucketName,
-		fileName(page.ScanId, page.SequenceId),
+		fileName(page.ScanID, page.SequenceID),
 		page.ScanTime,
 		fileSize,
 	)
 }
 
-func (b *B2) Retrieve(scanId string, sequenceId int) (*models.ScannedPage, error) {
-	obj, err := b.b2fs.NewObject(context.Background(), fileName(scanId, sequenceId))
+func (b *B2) Retrieve(ctx context.Context, scanID string, sequenceId int) (*models.ScannedPage, error) {
+	obj, err := b.b2FS.NewObject(ctx, fileName(scanID, sequenceId))
 	if err != nil {
 		if errors.Is(err, fs.ErrorObjectNotFound) {
 			return nil, os.ErrNotExist
@@ -83,7 +82,7 @@ func (b *B2) Retrieve(scanId string, sequenceId int) (*models.ScannedPage, error
 	}
 
 	var reader io.ReadSeeker
-	objReader, err := obj.Open(context.Background())
+	objReader, err := obj.Open(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -104,16 +103,16 @@ func (b *B2) Retrieve(scanId string, sequenceId int) (*models.ScannedPage, error
 
 	return &models.ScannedPage{
 		Reader:     reader,
-		ScanId:     scanId,
-		SequenceId: sequenceId,
-		ScanTime:   obj.ModTime(context.Background()),
+		ScanID:     scanID,
+		SequenceID: sequenceId,
+		ScanTime:   obj.ModTime(ctx),
 	}, nil
 }
 
 // ListFiles returns a list of files for a given scan
-func (b *B2) ListFiles(scanId string) ([]models.ScannedPage, error) {
+func (b *B2) ListFiles(scanID string) ([]models.ScannedPage, error) {
 	ctx := context.Background()
-	objects, err := b.b2fs.List(ctx, scanId)
+	objects, err := b.b2FS.List(ctx, scanID)
 	if err != nil {
 		return nil, err
 	}
@@ -128,12 +127,12 @@ func (b *B2) ListFiles(scanId string) ([]models.ScannedPage, error) {
 func objToScannedPage(obj fs.DirEntry) models.ScannedPage {
 	s := models.ScannedPage{}
 	fileName := path.Base(obj.Remote())
-	scanId := path.Dir(obj.Remote())
-	s.ScanId = scanId
+	scanID := path.Dir(obj.Remote())
+	s.ScanID = scanID
 	fileName = strings.TrimSuffix(fileName, ".jpg")
 	seqId, err := strconv.ParseInt(fileName, 10, 64)
 	if err == nil {
-		s.SequenceId = int(seqId)
+		s.SequenceID = int(seqId)
 	}
 	return s
 }
@@ -162,7 +161,7 @@ func New(config Config) (*B2, error) {
 		log.Warnf("no passphrase provided, encryption will be disabled")
 	}
 
-	b2fs, err := rcloneb2.NewFs(context.Background(),
+	b2FS, err := rcloneb2.NewFs(context.Background(),
 		"b2",
 		config.BucketName+"/",
 		configmap.Simple{
@@ -178,7 +177,7 @@ func New(config Config) (*B2, error) {
 
 	b := &B2{
 		bucketName: config.BucketName,
-		b2fs:       b2fs,
+		b2FS:       b2FS,
 	}
 
 	if len(config.Passphrase) != 0 {

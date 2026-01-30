@@ -1,10 +1,12 @@
 package fs
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"path"
+	"regexp"
 
 	"github.com/sirupsen/logrus"
 
@@ -12,35 +14,56 @@ import (
 	"github.com/denysvitali/odi-backend/pkg/storage/model"
 )
 
+// validScanIDRegex matches only alphanumeric characters, hyphens, and underscores
+var validScanIDRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+// validateScanID validates that the scanID only contains safe characters
+// and does not contain path traversal sequences
+func validateScanID(scanID string) error {
+	if scanID == "" {
+		return fmt.Errorf("scanID cannot be empty")
+	}
+	if !validScanIDRegex.MatchString(scanID) {
+		return fmt.Errorf("scanID contains invalid characters: only alphanumeric characters, hyphens, and underscores are allowed")
+	}
+	return nil
+}
+
 var log = logrus.StandardLogger().WithField("package", "storage/fs")
 
 type Fs struct {
 	dir string
 }
 
-func (fs *Fs) Retrieve(scanId string, sequenceNumber int) (*models.ScannedPage, error) {
-	f, err := os.Open(path.Join(fs.dir, scanId, fmt.Sprintf("%d.jpg", sequenceNumber)))
+func (fs *Fs) Retrieve(ctx context.Context, scanID string, sequenceNumber int) (*models.ScannedPage, error) {
+	if err := validateScanID(scanID); err != nil {
+		return nil, err
+	}
+	f, err := os.Open(path.Join(fs.dir, scanID, fmt.Sprintf("%d.jpg", sequenceNumber)))
 	if err != nil {
 		return nil, err
 	}
 	return &models.ScannedPage{
-		ScanId:     scanId,
-		SequenceId: sequenceNumber,
+		ScanID:     scanID,
+		SequenceID: sequenceNumber,
 		Reader:     f,
 	}, nil
 }
 
-func (fs *Fs) Store(page models.ScannedPage) error {
+func (fs *Fs) Store(ctx context.Context, page models.ScannedPage) error {
+	if err := validateScanID(page.ScanID); err != nil {
+		return err
+	}
 	// Check if directory exists
-	_, err := os.Stat(path.Join(fs.dir, page.ScanId))
+	_, err := os.Stat(path.Join(fs.dir, page.ScanID))
 	if os.IsNotExist(err) {
-		err = os.MkdirAll(path.Join(fs.dir, page.ScanId), 0755)
+		err = os.MkdirAll(path.Join(fs.dir, page.ScanID), 0755)
 		if err != nil {
 			return err
 		}
 	}
 
-	f, err := os.Create(path.Join(fs.dir, page.ScanId, fmt.Sprintf("%d.jpg", page.SequenceId)))
+	f, err := os.Create(path.Join(fs.dir, page.ScanID, fmt.Sprintf("%d.jpg", page.SequenceID)))
 	if err != nil {
 		return err
 	}
@@ -63,7 +86,7 @@ func New(dir string) (*Fs, error) {
 	if os.IsNotExist(err) {
 		err = os.MkdirAll(dir, 0755)
 		if err != nil {
-			log.Fatalf("unable to create storage directory: %v", err)
+			return nil, fmt.Errorf("unable to create storage directory: %w", err)
 		}
 	}
 

@@ -37,7 +37,7 @@ func New(zefixDsn string) (*Processor, error) {
 	return &p, nil
 }
 
-func (p *Processor) ProcessFromOpenSearch(osClient *opensearch.Client, index string) error {
+func (p *Processor) ProcessFromOpenSearch(ctx context.Context, osClient *opensearch.Client, index string) error {
 	// Go through all the documents in the index and update them
 	// by adding some new fields
 
@@ -49,10 +49,11 @@ func (p *Processor) ProcessFromOpenSearch(osClient *opensearch.Client, index str
 		Size:  &size,
 	}
 
-	res, err := req.Do(context.Background(), osClient)
+	res, err := req.Do(ctx, osClient)
 	if err != nil {
 		return err
 	}
+	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status code: %d", res.StatusCode)
@@ -81,7 +82,7 @@ func (p *Processor) ProcessFromOpenSearch(osClient *opensearch.Client, index str
 			Body:       strings.NewReader(string(newSourceBytes)),
 		}
 
-		res, err = req.Do(context.Background(), osClient)
+		res, err = req.Do(ctx, osClient)
 		if err != nil {
 			return err
 		}
@@ -132,7 +133,7 @@ func (p *Processor) FindCompanies(text string) []zefix.Company {
 		if _, ok := companiesMap[companyName]; ok {
 			continue
 		}
-		if strings.HasPrefix(strings.ToLower("Post CH "), strings.ToLower(companyName)) {
+		if strings.HasPrefix(strings.ToLower(companyName), strings.ToLower("Post CH ")) {
 			// Skip Post CH AG since it does appear on basically every document
 			continue
 		}

@@ -1,6 +1,7 @@
 package zefix_test
 
 import (
+	"context"
 	"crypto/tls"
 	"net/http"
 	"os"
@@ -45,7 +46,8 @@ func getOpenSearchClient(t *testing.T) *opensearch.Client {
 func TestProcessor(t *testing.T) {
 	p := getClient(t)
 	osClient := getOpenSearchClient(t)
-	err := p.ProcessFromOpenSearch(osClient, "documents")
+	ctx := context.Background()
+	err := p.ProcessFromOpenSearch(ctx, osClient, "documents")
 	if err != nil {
 		t.Fatal(err)
 	}

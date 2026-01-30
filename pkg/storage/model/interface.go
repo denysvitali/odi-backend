@@ -1,13 +1,17 @@
 package model
 
-import "github.com/denysvitali/odi-backend/pkg/models"
+import (
+	"context"
+
+	"github.com/denysvitali/odi-backend/pkg/models"
+)
 
 type Storer interface {
-	Store(models.ScannedPage) error
+	Store(ctx context.Context, page models.ScannedPage) error
 }
 
 type Retriever interface {
-	Retrieve(scanId string, sequenceNumber int) (*models.ScannedPage, error)
+	Retrieve(ctx context.Context, scanID string, sequenceNumber int) (*models.ScannedPage, error)
 }
 
 type RWStorage interface {

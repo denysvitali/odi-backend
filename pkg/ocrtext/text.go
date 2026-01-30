@@ -1,9 +1,9 @@
 package ocrtext
 
 import (
-	"fmt"
 	"math"
 	"sort"
+	"strings"
 
 	"github.com/denysvitali/odi-backend/pkg/ocrclient"
 )
@@ -57,7 +57,7 @@ func GetText(v *ocrclient.OcrResult, mergeDistance float64, horizontalDistance f
 		return columns[i][0].BoundingBox.Top < columns[j][0].BoundingBox.Top
 	})
 
-	output := ""
+	var output strings.Builder
 
 	// Print the text
 	for _, c := range columnsValue {
@@ -66,16 +66,16 @@ func GetText(v *ocrclient.OcrResult, mergeDistance float64, horizontalDistance f
 			currentBlock := b
 			if prevBlock != nil {
 				if math.Abs(float64(prevBlock.BoundingBox.Top-b.BoundingBox.Top)) >= horizontalDistance {
-					output += fmt.Sprintf("\n\n")
+					output.WriteString("\n\n")
 				} else {
-					output += fmt.Sprintf(" ")
+					output.WriteString(" ")
 				}
 			}
-			output += fmt.Sprintf("%s", b.Text)
+			output.WriteString(b.Text)
 			prevBlock = &currentBlock
 		}
-		output += fmt.Sprintf("\n")
+		output.WriteString("\n")
 	}
 
-	return output
+	return output.String()
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -17,7 +18,7 @@ type Client struct {
 	mutex    sync.Mutex
 }
 
-var logger = logrus.StandardLogger().WithField("package", "ocr_client")
+var log = logrus.StandardLogger().WithField("package", "ocr_client")
 
 func (c *Client) Process(f io.Reader) (*OcrResult, error) {
 	// We need to lock the mutex because the OCR API is not that fast
@@ -25,18 +26,19 @@ func (c *Client) Process(f io.Reader) (*OcrResult, error) {
 	defer c.mutex.Unlock()
 	ocrUrl, err := c.endpoint.Parse("/api/v1/ocr")
 	if err != nil {
-		return nil, fmt.Errorf("unable to parse URL: %v", err)
+		return nil, fmt.Errorf("unable to parse URL: %w", err)
 	}
 	req, err := http.NewRequest(http.MethodPost, ocrUrl.String(), f)
 	if err != nil {
-		return nil, fmt.Errorf("unable to create request: %v", err)
+		return nil, fmt.Errorf("unable to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "image/jpeg")
 
 	res, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("unable to perform HTTP request: %v", err)
+		return nil, fmt.Errorf("unable to perform HTTP request: %w", err)
 	}
+	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status %s", res.Status)
 	}
@@ -58,6 +60,7 @@ func (c *Client) Healthz() (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	defer res.Body.Close()
 
 	if res.StatusCode == http.StatusOK {
 		return true, nil
@@ -77,10 +80,12 @@ func New(endpoint string) (*Client, error) {
 
 	return &Client{
 		endpoint: u,
-		http:     http.DefaultClient,
+		http: &http.Client{
+			Timeout: 30 * time.Second,
+		},
 	}, nil
 }
 
-func (c *Client) SetHttpTransport(transport http.RoundTripper) {
+func (c *Client) SetHTTPTransport(transport http.RoundTripper) {
 	c.http.Transport = transport
 }

@@ -27,7 +27,7 @@ func FillKeychainValues[T any](args *T) error {
 			if svc == nil {
 				svc, session, err = initSecretService()
 				if err != nil {
-					return fmt.Errorf("init secret service: %v", err)
+					return fmt.Errorf("init secret service: %w", err)
 				}
 			}
 			if session == nil {
@@ -39,7 +39,7 @@ func FillKeychainValues[T any](args *T) error {
 				"element": keychainElement,
 			})
 			if err != nil {
-				return fmt.Errorf("search keychain element: %v", err)
+				return fmt.Errorf("search keychain element: %w", err)
 			}
 			if len(items) < 1 {
 				return fmt.Errorf("keychain element %s not found", keychainElement)
@@ -49,7 +49,7 @@ func FillKeychainValues[T any](args *T) error {
 			}
 			secretValue, err := svc.GetSecret(items[0], *session)
 			if err != nil {
-				return fmt.Errorf("get value from keychain: %v", err)
+				return fmt.Errorf("get value from keychain: %w", err)
 			}
 			if !f.CanSet() {
 				return fmt.Errorf("set value for field %s", v.Type().Field(i).Name)
@@ -63,14 +63,14 @@ func FillKeychainValues[T any](args *T) error {
 func initSecretService() (*secretservice.SecretService, *secretservice.Session, error) {
 	svc, err := secretservice.NewService()
 	if err != nil {
-		return nil, nil, fmt.Errorf("create keychain service: %v", err)
+		return nil, nil, fmt.Errorf("create keychain service: %w", err)
 	}
 	if err := svc.Unlock([]dbus.ObjectPath{collection}); err != nil {
-		return nil, nil, fmt.Errorf("unlock keychain service: %v", err)
+		return nil, nil, fmt.Errorf("unlock keychain service: %w", err)
 	}
 	session, err := svc.OpenSession(secretservice.AuthenticationDHAES)
 	if err != nil {
-		return nil, nil, fmt.Errorf("open session: %v", err)
+		return nil, nil, fmt.Errorf("open session: %w", err)
 	}
 	return svc, session, nil
 }

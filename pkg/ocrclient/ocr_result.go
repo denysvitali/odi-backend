@@ -6,6 +6,14 @@ import (
 	"sort"
 )
 
+// Default grouping parameters for text block clustering
+const (
+	// DefaultGroupEpsilonX is the default horizontal tolerance for grouping text blocks
+	DefaultGroupEpsilonX = 5
+	// DefaultGroupEpsilonY is the default vertical tolerance for grouping text blocks
+	DefaultGroupEpsilonY = 200
+)
+
 type TextBlock struct {
 	Text        string      `json:"text"`
 	Lines       []line      `json:"lines"`
@@ -68,7 +76,7 @@ var _ sort.Interface = SortText{}
 func (o *OcrResult) Text() string {
 	blocks := o.TextBlocks
 	sort.Sort(SortText(blocks))
-	groups := GroupTextBlocks(blocks, 5, 200)
+	groups := GroupTextBlocks(blocks, DefaultGroupEpsilonX, DefaultGroupEpsilonY)
 
 	buffer := bytes.NewBuffer(nil)
 	for _, b := range groups {

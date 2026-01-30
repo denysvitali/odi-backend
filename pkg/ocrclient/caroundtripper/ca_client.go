@@ -27,6 +27,7 @@ func New(caPath string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer caFile.Close()
 
 	caBytes, err := io.ReadAll(caFile)
 	if err != nil {
@@ -39,7 +40,7 @@ func New(caPath string) (*Client, error) {
 	}
 
 	if len(rest) > 0 {
-		return nil, fmt.Errorf("rest contaisn more than 0 bytes")
+		return nil, fmt.Errorf("rest contains more than 0 bytes")
 	}
 
 	cert, err := x509.ParseCertificate(block.Bytes)

@@ -36,7 +36,7 @@ func TestSort(t *testing.T) {
 	img := gocv.IMRead("../../resources/testdata/ocr/private/1.jpg", gocv.IMReadColor)
 
 	sort.Sort(ocrclient.SortText(ocrResult.TextBlocks))
-	groups := ocrclient.GroupTextBlocks(ocrResult.TextBlocks, 5, 200)
+	groups := ocrclient.GroupTextBlocks(ocrResult.TextBlocks, ocrclient.DefaultGroupEpsilonX, ocrclient.DefaultGroupEpsilonY)
 
 	for idx, b := range groups {
 		bb := ocrclient.TextBlockGroup(b).BoundingBox()

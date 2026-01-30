@@ -22,12 +22,7 @@ func GroupTextBlocks(blocks []TextBlock, epsilonX, epsilonY int) [][]TextBlock {
 			}
 		}
 
-		// If the group only has one block, add it to a separate group
-		if len(group) == 1 {
-			groups = append(groups, []TextBlock{group[0]})
-		} else {
-			groups = append(groups, group)
-		}
+		groups = append(groups, group)
 	}
 
 	return groups
@@ -51,22 +46,6 @@ func abs(x int) int {
 		return -x
 	}
 	return x
-}
-
-// max returns the maximum of a and b
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-// min returns the minimum of a and b
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 type TextBlockGroup []TextBlock

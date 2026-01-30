@@ -3,9 +3,7 @@ package indexer
 import (
 	"bytes"
 	"context"
-	"crypto/sha1"
 	"crypto/tls"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opensearch-project/opensearch-go"
-	"github.com/opensearch-project/opensearch-go/opensearchapi"
+	"github.com/opensearch-project/opensearch-go/v2"
+	"github.com/opensearch-project/opensearch-go/v2/opensearchapi"
 	"github.com/sirupsen/logrus"
 
 	"github.com/denysvitali/go-datesfinder"
@@ -33,8 +31,8 @@ type Indexer struct {
 	opensearchPassword           string
 	opensearchInsecureSkipVerify bool
 	documentsIndex               string
-	ocrApiAddr                   string
-	ocrApiCaPath                 string
+	ocrAPIAddr                   string
+	ocrAPICaPath                 string
 	zefixDsn                     string
 
 	opensearchClient *opensearch.Client
@@ -46,26 +44,33 @@ type Indexer struct {
 	horizontalDistance float64
 }
 
-const DefaultDocumentsIndex = "documents"
+const (
+	DefaultDocumentsIndex = "documents"
+
+	// DefaultMergeDistance is the default maximum vertical distance between text blocks to be merged
+	DefaultMergeDistance = 150
+	// DefaultHorizontalDistance is the default maximum horizontal distance between text blocks to be merged
+	DefaultHorizontalDistance = 10
+)
 
 type Option func(*Indexer)
 
 var log = logrus.StandardLogger().WithField("package", "indexer")
 
-func New(opensearchAddr string, ocrApiAddr string, zefixDsn string, opts ...Option) (*Indexer, error) {
+func New(opensearchAddr string, ocrAPIAddr string, zefixDsn string, opts ...Option) (*Indexer, error) {
 	idx := &Indexer{
 		opensearchAddr:     opensearchAddr,
-		ocrApiAddr:         ocrApiAddr,
+		ocrAPIAddr:         ocrAPIAddr,
 		zefixDsn:           zefixDsn,
 		documentsIndex:     DefaultDocumentsIndex,
-		mergeDistance:      150,
-		horizontalDistance: 10,
+		mergeDistance:      DefaultMergeDistance,
+		horizontalDistance: DefaultHorizontalDistance,
 	}
 	for _, opt := range opts {
 		opt(idx)
 	}
 	if err := idx.init(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("init indexer: %w", err)
 	}
 	return idx, nil
 }
@@ -73,20 +78,20 @@ func New(opensearchAddr string, ocrApiAddr string, zefixDsn string, opts ...Opti
 func (i *Indexer) PingOcrApi() (bool, error) {
 	err := i.ensureOcrApiClient()
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("ensure OCR API client: %w", err)
 	}
 
 	return i.ocrClient.Healthz()
 }
 
-func (i *Indexer) PingOpensearch() (*opensearchapi.Response, error) {
+func (i *Indexer) PingOpensearch(ctx context.Context) (*opensearchapi.Response, error) {
 	err := i.ensureOpensearchClient()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("ensure opensearch client: %w", err)
 	}
 
 	req := opensearchapi.PingRequest{}
-	return req.Do(context.Background(), i.opensearchClient)
+	return req.Do(ctx, i.opensearchClient)
 }
 
 func (i *Indexer) ensureOpensearchClient() error {
@@ -103,7 +108,10 @@ func (i *Indexer) ensureOpensearchClient() error {
 		Username:  i.opensearchUsername,
 		Password:  i.opensearchPassword,
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("create opensearch client: %w", err)
+	}
+	return nil
 }
 
 func (i *Indexer) ensureOcrApiClient() error {
@@ -112,17 +120,17 @@ func (i *Indexer) ensureOcrApiClient() error {
 	}
 
 	var err error
-	i.ocrClient, err = ocrclient.New(i.ocrApiAddr)
+	i.ocrClient, err = ocrclient.New(i.ocrAPIAddr)
 	if err != nil {
-		return err
+		return fmt.Errorf("create OCR client: %w", err)
 	}
 
-	if i.ocrApiCaPath != "" {
-		caRoundTripper, err := caroundtripper.New(i.ocrApiCaPath)
+	if i.ocrAPICaPath != "" {
+		caRoundTripper, err := caroundtripper.New(i.ocrAPICaPath)
 		if err != nil {
-			return err
+			return fmt.Errorf("create CA round tripper: %w", err)
 		}
-		i.ocrClient.SetHttpTransport(caRoundTripper)
+		i.ocrClient.SetHTTPTransport(caRoundTripper)
 	}
 	return nil
 }
@@ -143,15 +151,15 @@ func (i *Indexer) init() error {
 	}
 
 	// Create OpenSearch index
-	err = i.createOpensearchIndex()
+	err = i.createOpensearchIndex(context.Background())
 	if err != nil {
-		return fmt.Errorf("unable to create opensearch index: %v", err)
+		return fmt.Errorf("unable to create opensearch index: %w", err)
 	}
 
 	// Check if API ping works
 	h, err := i.ocrClient.Healthz()
 	if err != nil {
-		return fmt.Errorf("unable to ping OCR API: %v", err)
+		return fmt.Errorf("unable to ping OCR API: %w", err)
 	}
 
 	if !h {
@@ -169,17 +177,17 @@ func (i *Indexer) ensureInitCalled() error {
 	return nil
 }
 
-func (i *Indexer) Index(page models.ScannedPage) error {
-	log.Debugf("indexing %s", page.Id())
+func (i *Indexer) Index(ctx context.Context, page models.ScannedPage) error {
+	log.Debugf("indexing %s", page.ID())
 	err := i.ensureInitCalled()
 	if err != nil {
-		return err
+		return fmt.Errorf("ensure init called: %w", err)
 	}
 
-	log.Debugf("processing %s via OCR client", page.Id())
+	log.Debugf("processing %s via OCR client", page.ID())
 	ocrResult, err := i.ocrClient.Process(page.Reader)
 	if err != nil {
-		return fmt.Errorf("ocr client failed: %v", err)
+		return fmt.Errorf("ocr client failed: %w", err)
 	}
 
 	log.Debugf("getting text")
@@ -190,7 +198,7 @@ func (i *Indexer) Index(page models.ScannedPage) error {
 
 	jsonBuffer := bytes.NewBuffer(nil)
 	enc := json.NewEncoder(jsonBuffer)
-	log.Debugf("getting barcodes for %s", page.Id())
+	log.Debugf("getting barcodes for %s", page.ID())
 	barcodes := i.getBarcodes(ocrResult)
 	var barcode *models.Barcode
 	var additionalBarcodes []models.Barcode
@@ -207,8 +215,8 @@ func (i *Indexer) Index(page models.ScannedPage) error {
 		Barcode:            barcode,
 		AdditionalBarcodes: additionalBarcodes,
 		IndexedAt:          time.Now(),
-		ScanId:             page.ScanId,
-		SequenceId:         page.SequenceId,
+		ScanID:             page.ScanID,
+		SequenceID:         page.SequenceID,
 	}
 	if len(dates) > 0 {
 		d.Date = &dates[0]
@@ -221,27 +229,27 @@ func (i *Indexer) Index(page models.ScannedPage) error {
 	}
 	err = enc.Encode(d)
 	if err != nil {
-		return fmt.Errorf("unable to encode JSON: %v", err)
+		return fmt.Errorf("unable to encode JSON: %w", err)
 	}
 
-	log.Debugf("indexing %s", page.Id())
+	log.Debugf("indexing %s", page.ID())
 
 	req := opensearchapi.IndexRequest{
 		Index:      i.documentsIndex,
-		DocumentID: page.Id(),
+		DocumentID: page.ID(),
 		Body:       jsonBuffer,
 		OpType:     "index",
 	}
-	res, err := req.Do(context.Background(), i.opensearchClient)
+	res, err := req.Do(ctx, i.opensearchClient)
 	if err != nil {
-		return err
+		return fmt.Errorf("index document: %w", err)
 	}
 
 	if res.StatusCode < 200 || res.StatusCode > 299 {
 		errorMessage := decodeError(res.Body)
 		return fmt.Errorf("opensearch returned an invalid status %s: %s", res.Status(), errorMessage)
 	}
-	log.Debugf("indexed %s", page.Id())
+	log.Debugf("indexed %s", page.ID())
 	return nil
 }
 
@@ -250,7 +258,9 @@ func decodeError(body io.ReadCloser) string {
 		Error string `json:"error"`
 	}
 	dec := json.NewDecoder(body)
-	dec.Decode(&errorMessage)
+	if err := dec.Decode(&errorMessage); err != nil {
+		return fmt.Sprintf("failed to decode error: %v", err)
+	}
 	return errorMessage.Error
 }
 
@@ -259,7 +269,10 @@ func getDocumentDates(result *ocrclient.OcrResult) []time.Time {
 	// Try to parse the date from the text
 	var dates []time.Time
 	for _, t := range result.TextBlocks {
-		d, _ := datesfinder.FindDates(t.Text)
+		d, err := datesfinder.FindDates(t.Text)
+		if err != nil {
+			continue
+		}
 		dates = append(dates, d...)
 	}
 
@@ -296,20 +309,11 @@ func (i *Indexer) getText(result *ocrclient.OcrResult) string {
 	return ocrtext.GetText(result, i.mergeDistance, i.horizontalDistance)
 }
 
-func documentHash(reader io.Reader) (string, error) {
-	h := sha1.New()
-	_, err := io.Copy(h, reader)
-	if err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-func (i *Indexer) createOpensearchIndex() error {
+func (i *Indexer) createOpensearchIndex(ctx context.Context) error {
 	req := opensearchapi.IndicesCreateRequest{Index: i.documentsIndex}
-	res, err := req.Do(context.Background(), i.opensearchClient)
+	res, err := req.Do(ctx, i.opensearchClient)
 	if err != nil {
-		return err
+		return fmt.Errorf("create index: %w", err)
 	}
 	if res.StatusCode == http.StatusBadRequest {
 		// Index already exists
@@ -325,7 +329,10 @@ func (i *Indexer) createOpensearchIndex() error {
 func (i *Indexer) ensureZefixClient() error {
 	var err error
 	i.zefixProcessor, err = zefix.New(i.zefixDsn)
-	return err
+	if err != nil {
+		return fmt.Errorf("create zefix client: %w", err)
+	}
+	return nil
 }
 
 func (i *Indexer) PingZefix() error {

@@ -2,6 +2,7 @@ package b2_test
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -32,10 +33,11 @@ func TestB2_Store(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = b2Storage.Store(models.ScannedPage{
+	ctx := context.Background()
+	err = b2Storage.Store(ctx, models.ScannedPage{
 		Reader:     bytes.NewReader([]byte("hello world")),
-		ScanId:     "test",
-		SequenceId: 1,
+		ScanID:     "test",
+		SequenceID: 1,
 		ScanTime:   time.Now(),
 	})
 	if err != nil {
@@ -57,10 +59,11 @@ func TestB2_StoreEncrypted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = b2Storage.Store(models.ScannedPage{
+	ctx := context.Background()
+	err = b2Storage.Store(ctx, models.ScannedPage{
 		Reader:     bytes.NewReader([]byte("hello world")),
-		ScanId:     "test-encryption",
-		SequenceId: 1,
+		ScanID:     "test-encryption",
+		SequenceID: 1,
 		ScanTime:   time.Now(),
 	})
 	if err != nil {
@@ -82,7 +85,8 @@ func TestB2_RetrieveEncrypted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := b2Storage.Retrieve("test-encryption", 1)
+	ctx := context.Background()
+	s, err := b2Storage.Retrieve(ctx, "test-encryption", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +118,8 @@ func TestB2_Retrieve(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := b2Storage.Retrieve("test", 1)
+	ctx := context.Background()
+	s, err := b2Storage.Retrieve(ctx, "test", 1)
 	if err != nil {
 		t.Fatal(err)
 	}

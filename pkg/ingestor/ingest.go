@@ -2,6 +2,7 @@ package ingestor
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"sync"
@@ -19,8 +20,14 @@ import (
 
 var log = logrus.StandardLogger()
 
+const (
+	DefaultWorkers = 10
+	// PageScanDelay is the delay between scanning pages to prevent overwhelming the scanner
+	PageScanDelay = 100 * time.Millisecond
+)
+
 type Config struct {
-	OcrApiAddr         string
+	OcrAPIAddr         string
 	OpenSearchAddr     string
 	OpenSearchUsername string
 	OpenSearchPassword string
@@ -46,7 +53,7 @@ func New(config Config) (*Ingestor, error) {
 		opts = append(opts, indexer.WithOpenSearchSkipTLS())
 	}
 	idx, err := indexer.New(
-		config.OpenSearchAddr, config.OcrApiAddr, config.ZefixDsn,
+		config.OpenSearchAddr, config.OcrAPIAddr, config.ZefixDsn,
 		opts...,
 	)
 	if err != nil {
@@ -57,19 +64,26 @@ func New(config Config) (*Ingestor, error) {
 
 	// Check that everything works:
 	log.Debugf("Pinging services")
-	if err := ing.Ping(); err != nil {
+	if err := ing.Ping(context.Background()); err != nil {
 		return nil, fmt.Errorf("unable to ping services: %w", err)
 	}
 	return ing, err
 }
 
-func (i *Ingestor) ScanPages(scanner DocumentsScanner) error {
-	pageChan := make(chan models.ScannedPage)
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go i.processPage(pageChan, &wg)
+func (i *Ingestor) ScanPages(ctx context.Context, scanner DocumentsScanner, workers int) error {
+	if workers <= 0 {
+		workers = DefaultWorkers
+	}
 
-	scanId := uuid.NewString()
+	pageChan := make(chan models.ScannedPage, workers)
+	wg := sync.WaitGroup{}
+
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go i.processPage(ctx, pageChan, &wg)
+	}
+
+	scanID := uuid.NewString()
 	seq := 0
 	for scanner.ScanPage() {
 		seq++
@@ -79,19 +93,23 @@ func (i *Ingestor) ScanPages(scanner DocumentsScanner) error {
 		}
 		pageChan <- models.ScannedPage{
 			Reader:     bytes.NewReader(b),
-			ScanId:     scanId,
-			SequenceId: seq,
+			ScanID:     scanID,
+			SequenceID: seq,
 			ScanTime:   time.Now(),
 		}
-		time.Sleep(100 * time.Millisecond) // Slow down infinite loops
+		time.Sleep(PageScanDelay) // Slow down infinite loops
 	}
 	close(pageChan)
 	wg.Wait()
 	return nil
 }
 
+func (i *Ingestor) ScanPagesWithDefaultWorkers(ctx context.Context, scanner DocumentsScanner) error {
+	return i.ScanPages(ctx, scanner, DefaultWorkers)
+}
+
 // Ingest takes care of connecting to the specified scanner, processes the document via OCR and outputs that to OpenSearch
-func (i *Ingestor) Ingest(scannerName string, source string) error {
+func (i *Ingestor) Ingest(ctx context.Context, scannerName string, source string) error {
 	c := airscan.NewClient(scannerName)
 	settings := preset.GrayscaleA4ADF()
 	settings.Duplex = false
@@ -103,66 +121,66 @@ func (i *Ingestor) Ingest(scannerName string, source string) error {
 	if err != nil {
 		return fmt.Errorf("unable to create scan job: %w", err)
 	}
-	err = i.ScanPages(job)
+	err = i.ScanPages(ctx, job, DefaultWorkers)
 	return err
 }
 
-func (i *Ingestor) processPage(pageChan <-chan models.ScannedPage, wg *sync.WaitGroup) {
+func (i *Ingestor) processPage(ctx context.Context, pageChan <-chan models.ScannedPage, wg *sync.WaitGroup) {
+	defer wg.Done()
 	for page := range pageChan {
-		wg.Add(1)
-		go i.processPageInner(page, wg)
+		i.processPageInner(ctx, page)
 	}
-	wg.Done()
 }
 
-func (i *Ingestor) processPageInner(page models.ScannedPage, wg *sync.WaitGroup) {
-	defer wg.Done()
-	buffer := bytes.NewBuffer([]byte{})
-	_, err := io.Copy(buffer, page.Reader)
+func (i *Ingestor) processPageInner(ctx context.Context, page models.ScannedPage) {
+
+	// Read all page data into a single buffer to avoid multiple copies
+	pageData, err := io.ReadAll(page.Reader)
 	if err != nil {
 		log.Errorf("unable to read page: %v", err)
 		return
 	}
 
-	page.Reader = bytes.NewReader(buffer.Bytes())
-
-	err = i.storage.Store(models.ScannedPage{
-		Reader:     bytes.NewReader(buffer.Bytes()),
-		ScanId:     page.ScanId,
-		SequenceId: page.SequenceId,
+	// Store the page using the same byte slice (avoids double buffering)
+	err = i.storage.Store(ctx, models.ScannedPage{
+		Reader:     bytes.NewReader(pageData),
+		ScanID:     page.ScanID,
+		SequenceID: page.SequenceID,
 	})
 	if err != nil {
 		log.Errorf("unable to store page: %v", err)
 		return
 	}
 
-	i.ocrAndIndex(page)
+	// Reuse the same byte slice for OCR/indexing
+	page.Reader = bytes.NewReader(pageData)
+	i.ocrAndIndex(ctx, page)
 }
 
-func (i *Ingestor) ocrAndIndex(page models.ScannedPage) {
-	log.Debugf("ingesting page %d of scan %q", page.SequenceId, page.ScanId)
-	err := i.idx.Index(page)
+func (i *Ingestor) ocrAndIndex(ctx context.Context, page models.ScannedPage) {
+	log.Debugf("ingesting page %d of scan %q", page.SequenceID, page.ScanID)
+	err := i.idx.Index(ctx, page)
 	if err != nil {
 		log.Errorf("unable to index: %v", err)
 	}
 }
 
 // Ping makes sure the two APIs (OCR and OpenSearch) are reachable
-func (i *Ingestor) Ping() error {
+func (i *Ingestor) Ping(ctx context.Context) error {
 	log.Debugf("Pinging OpenSearch")
-	res, err := i.idx.PingOpensearch()
+	res, err := i.idx.PingOpensearch(ctx)
 	if err != nil {
-		return fmt.Errorf("unable to ping OpenSearch: %v", err)
+		return fmt.Errorf("unable to ping OpenSearch: %w", err)
 	}
 	if res.IsError() {
-		return fmt.Errorf("unable to ping OpenSearch: %v", res.Status())
+		return fmt.Errorf("unable to ping OpenSearch: %s", res.Status())
 	}
 
 	// Ping OCR
 	log.Debugf("Pinging OCR API")
 	h, err := i.idx.PingOcrApi()
 	if err != nil {
-		return fmt.Errorf("unable to ping OCR API: %v", err)
+		return fmt.Errorf("unable to ping OCR API: %w", err)
 	}
 	if !h {
 		return fmt.Errorf("OCR API is not healthy")

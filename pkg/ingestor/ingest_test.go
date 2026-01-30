@@ -2,6 +2,7 @@ package ingestor_test
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"os"
@@ -26,11 +27,12 @@ func TestIngest(t *testing.T) {
 		t.Skip("SCANNER_NAME not set, skipping test")
 	}
 	i := getIngestor(t)
-	err := i.Ping()
+	ctx := context.Background()
+	err := i.Ping(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = i.Ingest(scanner, "adf")
+	err = i.Ingest(ctx, scanner, "adf")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +44,7 @@ func getIngestor(t *testing.T) *ingestor.Ingestor {
 		t.Fatal(err)
 	}
 	i, err := ingestor.New(ingestor.Config{
-		OcrApiAddr:         "https://ocr-api.lan:8443",
+		OcrAPIAddr:         "https://ocr-api.lan:8443",
 		OpenSearchAddr:     "https://127.0.0.1:9200",
 		OpenSearchUsername: "admin",
 		OpenSearchPassword: "admin",
@@ -121,12 +123,13 @@ func TestIngestWithExamplePictures(t *testing.T) {
 		)
 
 	i := getIngestor(t)
-	err := i.Ping()
+	ctx := context.Background()
+	err := i.Ping(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = i.ScanPages(&s)
+	err = i.ScanPages(ctx, &s, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
